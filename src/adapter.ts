@@ -270,44 +270,23 @@ export class JasmineAdapter implements TestAdapter, IDisposable {
 		if (node.type === 'suite') {
 			const suite = node as TestSuiteInfo;
 			
-			// Get or create the describe group
+			// Get or create the describe group at the root level
 			let describeGroup = this.describeGroups.get(suite.label);
 			if (!describeGroup) {
 				describeGroup = {
 					type: 'suite',
 					id: `describe:${suite.label}`,
 					label: suite.label,
-					children: []
+					children: [],
+					file: suite.file || file,
+					line: suite.line
 				};
 				this.describeGroups.set(suite.label, describeGroup);
 				rootSuite.children.push(describeGroup);
 			}
 			
-			// Create a new suite with updated ID to avoid conflicts
-			const newSuite: TestSuiteInfo = {
-				type: 'suite',
-				id: suite.id,
-				label: suite.label,
-				file: suite.file || file,
-				line: suite.line,
-				children: []
-			};
-			
-			// Process children recursively
-			for (const child of suite.children) {
-				if (child.type === 'suite') {
-					// For nested describes, add them directly
-					newSuite.children.push(child);
-				} else {
-					// For tests, ensure they have file info
-					const test = child as TestInfo;
-					test.file = test.file || file;
-					newSuite.children.push(test);
-				}
-			}
-			
-			// Merge with existing describe group
-			this.mergeIntoDescribeGroup(describeGroup, newSuite);
+			// Now we need to merge the suite's content into the describe group
+			this.mergeSuiteIntoGroup(describeGroup, suite, file);
 		} else {
 			// Test at root level (not in any describe)
 			let ungrouped = this.describeGroups.get('_ungrouped_');
@@ -327,18 +306,43 @@ export class JasmineAdapter implements TestAdapter, IDisposable {
 		}
 	}
 
-	private mergeIntoDescribeGroup(target: TestSuiteInfo, source: TestSuiteInfo): void {
-		// If this is the first time we see this describe, just add all children
-		if (target.children.length === 0) {
-			target.children = source.children;
-			target.file = source.file;
-			target.line = source.line;
-			return;
-		}
-		
-		// Otherwise, merge children
-		for (const child of source.children) {
-			target.children.push(child);
+	private mergeSuiteIntoGroup(targetGroup: TestSuiteInfo, sourceSuite: TestSuiteInfo, file: string): void {
+		// Process each child of the source suite
+		for (const child of sourceSuite.children) {
+			if (child.type === 'suite') {
+				// For nested suites, we need to find or create the matching child in the target
+				const childSuite = child as TestSuiteInfo;
+				let matchingChild: TestSuiteInfo | undefined;
+				
+				// Look for an existing child with the same label
+				for (const targetChild of targetGroup.children) {
+					if (targetChild.type === 'suite' && targetChild.label === childSuite.label) {
+						matchingChild = targetChild as TestSuiteInfo;
+						break;
+					}
+				}
+				
+				if (!matchingChild) {
+					// Create a new child suite
+					matchingChild = {
+						type: 'suite',
+						id: childSuite.id,
+						label: childSuite.label,
+						file: childSuite.file || file,
+						line: childSuite.line,
+						children: []
+					};
+					targetGroup.children.push(matchingChild);
+				}
+				
+				// Recursively merge the children
+				this.mergeSuiteIntoGroup(matchingChild, childSuite, file);
+			} else {
+				// For tests, just add them to the target group
+				const test = child as TestInfo;
+				test.file = test.file || file;
+				targetGroup.children.push(test);
+			}
 		}
 	}
 
